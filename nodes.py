@@ -1,0 +1,243 @@
+import os
+import torch
+import torchaudio
+import numpy as np
+from huggingface_hub import snapshot_download
+
+# Importing fish_speech modules
+from fish_speech.models.text2semantic.inference import init_model as init_llama_model, generate_long
+from fish_speech.models.dac.inference import load_model as load_dac_model
+
+class FishSpeechModelDownloader:
+    """Nodo extra para descargar los modelos desde HuggingFace directamente al directorio de ComfyUI."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "model_repo": (["fishaudio/openaudio-s1-mini", "fishaudio/s2-pro"],),
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("checkpoint_path",)
+    FUNCTION = "download_model"
+    CATEGORY = "FishSpeech/Utils"
+
+    def download_model(self, model_repo):
+        # Descarga el modelo a models/fish_speech
+        base_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "../../models/fish_speech")
+        save_path = os.path.join(base_path, model_repo.split("/")[-1])
+
+        print(f"Descargando modelo {model_repo} a {save_path}...")
+        snapshot_download(repo_id=model_repo, local_dir=save_path)
+        print("Descarga completada.")
+
+        return (save_path,)
+
+class FishSpeechModelLoader:
+    """Carga los pesos de LLaMA (Texto a Semántica) y el Decoder (DAC)."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "checkpoint_path": ("STRING", {"default": "models/fish_speech/s2-pro"}),
+                "decoder_config": (["modded_dac_vq"],),
+                "device": (["cuda", "cpu"],),
+                "precision": (["bfloat16", "float16", "float32"], {"default": "bfloat16"}),
+            }
+        }
+
+    RETURN_TYPES = ("FS_LLAMA_MODEL", "FS_DECODER_MODEL")
+    RETURN_NAMES = ("llama_model", "decoder_model")
+    FUNCTION = "load_models"
+    CATEGORY = "FishSpeech/Loaders"
+
+    def load_models(self, checkpoint_path, decoder_config, device, precision):
+        print("Cargando LLaMA y Codec de Fish Speech...")
+
+        precision_dtype = torch.bfloat16
+        if precision == "float16":
+            precision_dtype = torch.float16
+        elif precision == "float32":
+            precision_dtype = torch.float32
+
+        # Initialize LLaMA model
+        llama_model, decode_one_token = init_llama_model(
+            checkpoint_path=checkpoint_path,
+            device=device,
+            precision=precision_dtype,
+            compile=False
+        )
+        llama_wrapper = {
+            "model": llama_model,
+            "decode_one_token": decode_one_token,
+            "device": device
+        }
+
+        # Initialize DAC Decoder model
+        codec_path = os.path.join(checkpoint_path, "codec.pth")
+        if not os.path.exists(codec_path):
+             # Let's check for firefly
+            if os.path.exists(os.path.join(checkpoint_path, "firefly-gan-vq-fsq-8x1024-21hz-generator.pth")):
+                 codec_path = os.path.join(checkpoint_path, "firefly-gan-vq-fsq-8x1024-21hz-generator.pth")
+
+        decoder_model = load_dac_model(
+            config_name=decoder_config,
+            checkpoint_path=codec_path,
+            device=device
+        )
+
+        return (llama_wrapper, decoder_model)
+
+class FishSpeechReferenceEncoder:
+    """Procesa un audio de referencia para extraer los 'prompt_tokens' (fake.npy) para clonación de voz."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "decoder_model": ("FS_DECODER_MODEL",),
+                "audio": ("AUDIO",), # Formato de audio estándar de ComfyUI
+            }
+        }
+
+    RETURN_TYPES = ("FS_PROMPT_TOKENS",)
+    RETURN_NAMES = ("prompt_tokens",)
+    FUNCTION = "encode_reference"
+    CATEGORY = "FishSpeech/Audio"
+
+    def encode_reference(self, decoder_model, audio):
+        print("Extrayendo tokens del audio de referencia...")
+
+        # Audio from ComfyUI is typically a dict: {"waveform": tensor(B, C, T), "sample_rate": int}
+        waveform = audio["waveform"]
+        sample_rate = audio["sample_rate"]
+
+        device = next(decoder_model.parameters()).device
+
+        # If stereo, take mean to get mono
+        if waveform.shape[1] > 1:
+            waveform = waveform.mean(1, keepdim=True)
+
+        # Resample to the decoder's expected sample rate
+        waveform = torchaudio.functional.resample(waveform, sample_rate, decoder_model.sample_rate)
+        waveform = waveform.to(device)
+
+        # Obtain VQ Tokens from the DAC Encoder
+        audio_lengths = torch.tensor([waveform.shape[2]], device=device, dtype=torch.long)
+
+        with torch.no_grad():
+            indices, _ = decoder_model.encode(waveform, audio_lengths)
+            if indices.ndim == 3:
+                indices = indices[0] # Take first batch
+
+        prompt_tokens = indices # Keep it as tensor
+        return (prompt_tokens,)
+
+class FishSpeechTextToSemantic:
+    """Toma el texto (y opcionalmente tokens de referencia) y genera los tokens semánticos."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "llama_model": ("FS_LLAMA_MODEL",),
+                "text": ("STRING", {"multiline": True, "default": "Hola mundo, probando Fish Speech."}),
+                "max_new_tokens": ("INT", {"default": 1024, "min": 128, "max": 4096}),
+                "temperature": ("FLOAT", {"default": 0.7, "min": 0.1, "max": 2.0}),
+                "top_p": ("FLOAT", {"default": 0.9, "min": 0.1, "max": 1.0}),
+                "repetition_penalty": ("FLOAT", {"default": 1.1, "min": 0.5, "max": 2.0}),
+            },
+            "optional": {
+                "prompt_tokens": ("FS_PROMPT_TOKENS",),
+                "prompt_text": ("STRING", {"multiline": True, "default": ""}), # Texto transcrito del audio de referencia
+            }
+        }
+
+    RETURN_TYPES = ("FS_SEMANTIC_TOKENS",)
+    RETURN_NAMES = ("semantic_tokens",)
+    FUNCTION = "generate_semantic"
+    CATEGORY = "FishSpeech/Generation"
+
+    def generate_semantic(self, llama_model, text, max_new_tokens, temperature, top_p, repetition_penalty, prompt_tokens=None, prompt_text=""):
+        print("Generando tokens semánticos a partir del texto...")
+
+        model = llama_model["model"]
+        decode_one_token = llama_model["decode_one_token"]
+        device = llama_model["device"]
+
+        # Configure caches for generation
+        with torch.device(device):
+            model.setup_caches(
+                max_batch_size=1,
+                max_seq_len=model.config.max_seq_len,
+                dtype=next(model.parameters()).dtype,
+            )
+
+        # Call generate_long which takes care of splitting text, applying prompts, and iterating chunks
+        generator = generate_long(
+            model=model,
+            device=device,
+            decode_one_token=decode_one_token,
+            text=text,
+            num_samples=1,
+            max_new_tokens=max_new_tokens,
+            top_p=top_p,
+            repetition_penalty=repetition_penalty,
+            temperature=temperature,
+            compile=False,
+            iterative_prompt=True,
+            chunk_length=512,
+            prompt_text=prompt_text if prompt_text else None,
+            prompt_tokens=prompt_tokens if prompt_tokens is not None else None,
+        )
+
+        codes = []
+        for response in generator:
+            if response.action == "sample":
+                codes.append(response.codes)
+
+        # Concatenate generated codes
+        if not codes:
+            semantic_tokens = torch.empty((0,), device=device)
+        else:
+            semantic_tokens = torch.cat(codes, dim=1)
+
+        return (semantic_tokens,)
+
+class FishSpeechDecoder:
+    """Decodifica los tokens semánticos a una forma de onda acústica usando el DAC."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "decoder_model": ("FS_DECODER_MODEL",),
+                "semantic_tokens": ("FS_SEMANTIC_TOKENS",),
+            }
+        }
+
+    RETURN_TYPES = ("AUDIO",)
+    RETURN_NAMES = ("audio",)
+    FUNCTION = "decode_audio"
+    CATEGORY = "FishSpeech/Generation"
+
+    def decode_audio(self, decoder_model, semantic_tokens):
+        print("Decodificando tokens a forma de onda de audio...")
+
+        device = next(decoder_model.parameters()).device
+        indices = semantic_tokens.to(device)
+
+        if indices.ndim == 2:
+            indices = indices.unsqueeze(0)
+
+        with torch.no_grad():
+            fake_audios = decoder_model.from_indices(indices)
+
+        # Structure for ComfyUI audio node: {"waveform": tensor(B, C, T), "sample_rate": int}
+        waveform = fake_audios.cpu()
+
+        audio_output = {"waveform": waveform, "sample_rate": decoder_model.sample_rate}
+        return (audio_output,)
