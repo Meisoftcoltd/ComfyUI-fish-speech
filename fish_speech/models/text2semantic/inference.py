@@ -541,7 +541,7 @@ def generate_long(
     assert 0 < top_p <= 1, "top_p must be in (0, 1]"
     assert 0 < temperature < 2, "temperature must be in (0, 2)"
 
-    use_prompt = bool(prompt_text) and bool(prompt_tokens)
+    use_prompt = bool(prompt_text) and (prompt_tokens is not None)
     if use_prompt and isinstance(prompt_text, str):
         prompt_text = [prompt_text]
         prompt_tokens = [prompt_tokens]
@@ -551,7 +551,7 @@ def generate_long(
             prompt_tokens
         ), "Prompt text and tokens must have the same length"
 
-    if prompt_tokens:
+    if prompt_tokens is not None:
         prompt_tokens = [i.cpu() for i in prompt_tokens]
 
     model_size = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -859,11 +859,11 @@ def main(
     os.makedirs(output_dir, exist_ok=True)
     precision = torch.half if half else torch.bfloat16
 
-    if prompt_text and not prompt_audio and not prompt_tokens:
+    if prompt_text and not prompt_audio and (prompt_tokens is None):
         raise ValueError(
             "--prompt-text requires either --prompt-audio or --prompt-tokens"
         )
-    if prompt_text and prompt_tokens and len(prompt_text) != len(prompt_tokens):
+    if prompt_text and (prompt_tokens is not None) and len(prompt_text) != len(prompt_tokens):
         raise ValueError(
             f"Number of prompt text ({len(prompt_text)}) and prompt tokens ({len(prompt_tokens)}) should be the same"
         )
