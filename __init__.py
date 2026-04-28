@@ -11,6 +11,12 @@ if current_dir not in sys.path:
 if fish_speech_dir not in sys.path:
     sys.path.insert(0, fish_speech_dir)
 
+# Asegurar que existe el archivo .project-root para pyrootutils
+project_root_file = os.path.join(fish_speech_dir, ".project-root")
+if not os.path.exists(project_root_file):
+    with open(project_root_file, "w") as f:
+        pass # Crea el archivo vacío si no existe
+
 from .nodes import (
     FishSpeechModelDownloader,
     FishSpeechModelLoader,
