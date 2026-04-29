@@ -134,7 +134,8 @@ class FishSpeechModelLoader:
             "required": {
                 "checkpoint_path": ("STRING", {"default": "models/fish_speech/s2-pro"}),
                 "decoder_config": (["modded_dac_vq"],),
-                "device": (["cuda", "cpu"],),
+                "llama_device": (["cuda", "cpu"], {"default": "cuda"}),
+                "decoder_device": (["cuda", "cpu"], {"default": "cpu"}),
                 "precision": (["bfloat16", "float16", "float32"], {"default": "bfloat16"}),
             }
         }
@@ -144,7 +145,7 @@ class FishSpeechModelLoader:
     FUNCTION = "load_models"
     CATEGORY = "FishSpeech/Loaders"
 
-    def load_models(self, checkpoint_path, decoder_config, device, precision):
+    def load_models(self, checkpoint_path, decoder_config, llama_device, decoder_device, precision):
         print("Cargando LLaMA y Codec de Fish Speech...")
 
         precision_dtype = torch.bfloat16
@@ -156,14 +157,14 @@ class FishSpeechModelLoader:
         # Initialize LLaMA model
         llama_model, decode_one_token = init_llama_model(
             checkpoint_path=checkpoint_path,
-            device=device,
+            device=llama_device,
             precision=precision_dtype,
             compile=False
         )
         llama_wrapper = {
             "model": llama_model,
             "decode_one_token": decode_one_token,
-            "device": device
+            "device": llama_device
         }
 
         # Initialize DAC Decoder model
@@ -176,7 +177,7 @@ class FishSpeechModelLoader:
         decoder_model = load_dac_model(
             config_name=decoder_config,
             checkpoint_path=codec_path,
-            device=device
+            device=decoder_device
         )
 
         return (llama_wrapper, decoder_model)
@@ -235,7 +236,7 @@ class FishSpeechTextToSemantic:
             "required": {
                 "llama_model": ("FS_LLAMA_MODEL",),
                 "text": ("STRING", {"multiline": True, "default": "Hola mundo, probando Fish Speech."}),
-                "max_new_tokens": ("INT", {"default": 1024, "min": 128, "max": 4096}),
+                "max_new_tokens": ("INT", {"default": 4096, "min": 128, "max": 8192}),
                 "temperature": ("FLOAT", {"default": 0.7, "min": 0.1, "max": 2.0}),
                 "top_p": ("FLOAT", {"default": 0.9, "min": 0.1, "max": 1.0}),
                 "repetition_penalty": ("FLOAT", {"default": 1.1, "min": 0.5, "max": 2.0}),
