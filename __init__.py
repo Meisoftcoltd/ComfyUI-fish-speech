@@ -22,7 +22,8 @@ from .nodes import (
     FishSpeechModelLoader,
     FishSpeechReferenceEncoder,
     FishSpeechTextToSemantic,
-    FishSpeechDecoder
+    FishSpeechDecoder,
+    FishSpeechWhisperTranscriber
 )
 
 NODE_CLASS_MAPPINGS = {
@@ -30,7 +31,8 @@ NODE_CLASS_MAPPINGS = {
     "FishSpeechModelLoader": FishSpeechModelLoader,
     "FishSpeechReferenceEncoder": FishSpeechReferenceEncoder,
     "FishSpeechTextToSemantic": FishSpeechTextToSemantic,
-    "FishSpeechDecoder": FishSpeechDecoder
+    "FishSpeechDecoder": FishSpeechDecoder,
+    "FishSpeechWhisperTranscriber": FishSpeechWhisperTranscriber
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -38,7 +40,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "FishSpeechModelLoader": "🐟 FishSpeech Loader",
     "FishSpeechReferenceEncoder": "🐟 Reference Audio Encoder",
     "FishSpeechTextToSemantic": "🐟 Text to Semantic (LLaMA)",
-    "FishSpeechDecoder": "🐟 Semantic to Audio (DAC)"
+    "FishSpeechDecoder": "🐟 Semantic to Audio (DAC)",
+    "FishSpeechWhisperTranscriber": "🐟 Whisper Transcriber"
 }
 
 __all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS']

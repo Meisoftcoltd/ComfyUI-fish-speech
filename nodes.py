@@ -14,12 +14,89 @@ if fish_speech_dir not in sys.path:
 # 3. AHORA SÍ, hacemos el resto de importaciones
 import torch
 import torchaudio
+import torchaudio.transforms as T
 import numpy as np
 from huggingface_hub import snapshot_download
+from faster_whisper import WhisperModel
 
 # Importing fish_speech modules
 from fish_speech.models.text2semantic.inference import init_model as init_llama_model, generate_long
 from fish_speech.models.dac.inference import load_model as load_dac_model
+
+
+class FishSpeechWhisperTranscriber:
+    """Transcribe el audio de referencia a texto usando faster-whisper, optimizado contra alucinaciones."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "audio": ("AUDIO",),
+                "model_size": (["tiny", "base", "small", "medium", "large-v3"], {"default": "base"}),
+                "language": (["auto", "es", "en", "fr", "de", "it", "pt", "ja", "zh"], {"default": "auto"}),
+                "device": (["cuda", "cpu"], {"default": "cuda"}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("prompt_text",)
+    FUNCTION = "transcribe"
+    CATEGORY = "FishSpeech/Audio"
+
+    def transcribe(self, audio, model_size, language, device):
+        print(f"Cargando modelo Whisper ({model_size}) en {device}...")
+        compute_type = "float16" if device == "cuda" else "int8"
+
+        try:
+            model = WhisperModel(model_size, device=device, compute_type=compute_type)
+        except RuntimeError as e:
+            if "CUDA out of memory" in str(e) or "out of memory" in str(e).lower():
+                print("Error: Memoria VRAM insuficiente para cargar Whisper. Por favor, intenta usar el modelo 'base' o 'small', o cambia el dispositivo a 'cpu'.")
+                raise RuntimeError("Error de VRAM: Memoria insuficiente para el modelo Whisper seleccionado. Usa uno más pequeño o CPU.") from e
+            else:
+                raise e
+
+        # Extraer tensor y sample rate del formato estándar de ComfyUI [batch, channels, samples]
+        waveform = audio["waveform"]
+        sample_rate = audio["sample_rate"]
+
+        # Convertir a mono si es estéreo (promedio de canales)
+        # Evaluamos explicitamente si hay mas de 1 canal en la dimension correcta (1 usualmente para batch, channels, samples)
+        if waveform.shape[1] > 1:
+            waveform = waveform.mean(dim=1, keepdim=True)
+
+        # Resamplear a 16000Hz (requerido por Whisper)
+        if sample_rate != 16000:
+            resampler = T.Resample(orig_freq=sample_rate, new_freq=16000)
+            waveform = resampler(waveform)
+
+        # Convertir a numpy array 1D (colapsando cualquier otra dimension de batch/channels a 1D plano)
+        audio_np = waveform.flatten().numpy()
+
+        print("Transcribiendo audio (con VAD anti-alucinaciones)...")
+        lang_param = None if language == "auto" else language
+
+        try:
+            segments, info = model.transcribe(
+                audio_np,
+                language=lang_param,
+                beam_size=5,
+                vad_filter=True, # CRÍTICO: Elimina silencios para evitar alucinaciones
+                condition_on_previous_text=False # CRÍTICO: Evita bucles de repetición
+            )
+
+            # Unir todos los segmentos detectados
+            transcription = " ".join([segment.text.strip() for segment in segments])
+            print(f"Transcripción detectada ({info.language}): {transcription}")
+
+            return (transcription,)
+
+        except RuntimeError as e:
+            if "CUDA out of memory" in str(e) or "out of memory" in str(e).lower():
+                print("Error: Memoria VRAM insuficiente durante la transcripción de Whisper. Por favor, intenta usar un modelo más pequeño o CPU.")
+                raise RuntimeError("Error de VRAM: Memoria insuficiente durante la transcripción. Usa un modelo Whisper más pequeño o CPU.") from e
+            else:
+                raise e
 
 class FishSpeechModelDownloader:
     """Nodo extra para descargar los modelos desde HuggingFace directamente al directorio de ComfyUI."""
