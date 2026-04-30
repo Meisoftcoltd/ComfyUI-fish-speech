@@ -237,6 +237,7 @@ class FishSpeechTextToSemantic:
                 "llama_model": ("FS_LLAMA_MODEL",),
                 "text": ("STRING", {"multiline": True, "default": "Hola mundo, probando Fish Speech."}),
                 "max_new_tokens": ("INT", {"default": 4096, "min": 128, "max": 8192}),
+                "chunk_length": ("INT", {"default": 512, "min": 128, "max": 4096, "step": 64}),
                 "temperature": ("FLOAT", {"default": 0.7, "min": 0.1, "max": 2.0}),
                 "top_p": ("FLOAT", {"default": 0.9, "min": 0.1, "max": 1.0}),
                 "repetition_penalty": ("FLOAT", {"default": 1.1, "min": 0.5, "max": 2.0}),
@@ -252,7 +253,7 @@ class FishSpeechTextToSemantic:
     FUNCTION = "generate_semantic"
     CATEGORY = "FishSpeech/Generation"
 
-    def generate_semantic(self, llama_model, text, max_new_tokens, temperature, top_p, repetition_penalty, prompt_tokens=None, prompt_text=""):
+    def generate_semantic(self, llama_model, text, max_new_tokens, chunk_length, temperature, top_p, repetition_penalty, prompt_tokens=None, prompt_text=""):
         print("Generando tokens semánticos a partir del texto...")
 
         model = llama_model["model"]
@@ -280,7 +281,7 @@ class FishSpeechTextToSemantic:
             temperature=temperature,
             compile=False,
             iterative_prompt=True,
-            chunk_length=512,
+            chunk_length=chunk_length,
             prompt_text=prompt_text if prompt_text else None,
             prompt_tokens=prompt_tokens if prompt_tokens is not None else None,
         )
