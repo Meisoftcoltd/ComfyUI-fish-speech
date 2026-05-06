@@ -19,9 +19,12 @@ import numpy as np
 from huggingface_hub import snapshot_download
 from faster_whisper import WhisperModel
 
+import folder_paths
+
 # Importing fish_speech modules
 from fish_speech.models.text2semantic.inference import init_model as init_llama_model, generate_long
 from fish_speech.models.dac.inference import load_model as load_dac_model
+from fish_speech.models.text2semantic.lora import LoraConfig, setup_lora
 
 
 class FishSpeechWhisperTranscriber:
@@ -333,3 +336,61 @@ class FishSpeechDecoder:
 
         audio_output = {"waveform": waveform, "sample_rate": decoder_model.sample_rate}
         return (audio_output,)
+
+class FishSpeechLoraLoader:
+    """Carga y aplica un LoRA al modelo LLaMA de Fish Speech."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "llama_model": ("FS_LLAMA_MODEL",),
+                "lora_name": (folder_paths.get_filename_list("loras"),),
+                "r": ("INT", {"default": 8, "min": 1, "max": 256, "step": 1}),
+                "alpha": ("INT", {"default": 16, "min": 1, "max": 256, "step": 1}),
+            }
+        }
+
+    RETURN_TYPES = ("FS_LLAMA_MODEL",)
+    RETURN_NAMES = ("llama_model",)
+    FUNCTION = "apply_lora"
+    CATEGORY = "FishSpeech/Loaders"
+
+    def apply_lora(self, llama_model, lora_name, r, alpha):
+        print(f"Configurando arquitectura LoRA (r={r}, alpha={alpha})...")
+        try:
+            lora_path = folder_paths.get_full_path("loras", lora_name)
+            if not lora_path:
+                raise FileNotFoundError(f"Archivo LoRA no encontrado: {lora_name}")
+
+            model = llama_model["model"]
+            device = llama_model["device"]
+
+            # Configurar la estructura LoRA en el modelo (Reemplaza nn.Linear por lora.Linear)
+            lora_config = LoraConfig(
+                r=r,
+                lora_alpha=alpha,
+                lora_dropout=0.0,
+                target_modules=["attention", "mlp", "embeddings", "output",
+                                "fast_attention", "fast_mlp", "fast_embeddings", "fast_output"]
+            )
+            setup_lora(model, lora_config)
+
+            print(f"Cargando pesos del LoRA: {lora_name}...")
+            if lora_path.endswith(".safetensors"):
+                from safetensors.torch import load_file
+                lora_state_dict = load_file(lora_path)
+            else:
+                lora_state_dict = torch.load(lora_path, map_location="cpu")
+                if "state_dict" in lora_state_dict:
+                    lora_state_dict = lora_state_dict["state_dict"]
+
+            # Cargar los pesos en el modelo (strict=False es requerido aquí)
+            model.load_state_dict(lora_state_dict, strict=False)
+            model.to(device)
+
+            print("LoRA aplicado correctamente.")
+            return (llama_model,)
+        except (RuntimeError, FileNotFoundError, Exception) as e:
+            print(f"Error al cargar el LoRA: {str(e)}")
+            raise RuntimeError(f"Error al cargar el LoRA {lora_name}: {str(e)}")
