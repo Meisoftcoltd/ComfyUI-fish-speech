@@ -667,9 +667,9 @@ def generate_long(
                     f"Audio masks non-zero count: {torch.count_nonzero(audio_masks)}"
                 )
 
-            if encoded.size(1) > max_length - 2048:
+            if encoded.size(1) >= max_length:
                 raise ValueError(
-                    f"Prompt is too long: {encoded.size(1)} > {max_length - 2048}"
+                    f"Prompt is too long: {encoded.size(1)} >= {max_length}"
                 )
 
             encoded = encoded.to(device=device)
