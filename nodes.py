@@ -395,8 +395,16 @@ class FishSpeechLoraLoader:
                 if "state_dict" in lora_state_dict:
                     lora_state_dict = lora_state_dict["state_dict"]
 
-            # Cargar los pesos en el modelo (strict=False es requerido aquí)
-            model.load_state_dict(lora_state_dict, strict=False)
+            # Limpiar el prefijo "model." que añade PyTorch Lightning
+            cleaned_state_dict = {}
+            for k, v in lora_state_dict.items():
+                if k.startswith("model."):
+                    cleaned_state_dict[k.replace("model.", "", 1)] = v
+                else:
+                    cleaned_state_dict[k] = v
+
+            # Cargar los pesos limpios en el modelo
+            model.load_state_dict(cleaned_state_dict, strict=False)
             model.to(device)
 
             print("LoRA aplicado correctamente.")
