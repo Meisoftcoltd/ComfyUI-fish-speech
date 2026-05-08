@@ -239,6 +239,13 @@ class FishSpeechTextToSemantic:
             "required": {
                 "llama_model": ("FS_LLAMA_MODEL",),
                 "text": ("STRING", {"multiline": True, "default": "Hola mundo, probando Fish Speech."}),
+                "max_seq_len": ("INT", {
+                    "default": 2048,
+                    "min": 512,
+                    "max": 32768,
+                    "step": 256,
+                    "display": "number"
+                }),
                 "max_new_tokens": ("INT", {"default": 4096, "min": 128, "max": 8192}),
                 "chunk_length": ("INT", {"default": 512, "min": 128, "max": 4096, "step": 64}),
                 "temperature": ("FLOAT", {"default": 0.7, "min": 0.1, "max": 2.0}),
@@ -256,18 +263,21 @@ class FishSpeechTextToSemantic:
     FUNCTION = "generate_semantic"
     CATEGORY = "FishSpeech/Generation"
 
-    def generate_semantic(self, llama_model, text, max_new_tokens, chunk_length, temperature, top_p, repetition_penalty, prompt_tokens=None, prompt_text=""):
+    def generate_semantic(self, llama_model, text, max_seq_len, max_new_tokens, chunk_length, temperature, top_p, repetition_penalty, prompt_tokens=None, prompt_text=""):
         print("Generando tokens semánticos a partir del texto...")
 
         model = llama_model["model"]
         decode_one_token = llama_model["decode_one_token"]
         device = llama_model["device"]
 
+        # Actualizamos dinámicamente max_seq_len para evitar excesivo consumo de VRAM o problemas de máscaras con frases cortas.
+        model.config.max_seq_len = max_seq_len
+
         # Configure caches for generation
         with torch.device(device):
             model.setup_caches(
                 max_batch_size=1,
-                max_seq_len=model.config.max_seq_len,
+                max_seq_len=max_seq_len,
                 dtype=next(model.parameters()).dtype,
             )
 
