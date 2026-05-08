@@ -381,7 +381,7 @@ class FishSpeechLoraLoader:
                 from safetensors.torch import load_file
                 lora_state_dict = load_file(lora_path)
             else:
-                lora_state_dict = torch.load(lora_path, map_location="cpu")
+                lora_state_dict = torch.load(lora_path, map_location="cpu", weights_only=False)
                 if "state_dict" in lora_state_dict:
                     lora_state_dict = lora_state_dict["state_dict"]
 
