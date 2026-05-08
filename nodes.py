@@ -376,13 +376,12 @@ class FishSpeechLoraLoader:
             model = llama_model["model"]
             device = llama_model["device"]
 
-            # Configurar la estructura LoRA en el modelo (Reemplaza nn.Linear por lora.Linear)
+            # 1. Configurar la estructura LoRA EXACTAMENTE igual que en el entrenamiento
             lora_config = LoraConfig(
                 r=r,
                 lora_alpha=alpha,
                 lora_dropout=0.0,
-                target_modules=["attention", "mlp", "embeddings", "output",
-                                "fast_attention", "fast_mlp", "fast_embeddings", "fast_output"]
+                target_modules=["attention", "mlp", "embeddings", "output"]
             )
             setup_lora(model, lora_config)
 
@@ -395,18 +394,23 @@ class FishSpeechLoraLoader:
                 if "state_dict" in lora_state_dict:
                     lora_state_dict = lora_state_dict["state_dict"]
 
-            # Limpiar el prefijo "model." que añade PyTorch Lightning
+            # 2. ESCUDO: Extraer SOLO los pesos LoRA y alinear el dtype
             cleaned_state_dict = {}
+            target_dtype = next(model.parameters()).dtype
+
             for k, v in lora_state_dict.items():
-                if k.startswith("model."):
-                    cleaned_state_dict[k.replace("model.", "", 1)] = v
-                else:
-                    cleaned_state_dict[k] = v
+                if "lora" in k:  # <-- Filtro vital para no sobrescribir el modelo base
+                    clean_key = k.replace("model.", "", 1) if k.startswith("model.") else k
+                    cleaned_state_dict[clean_key] = v.to(dtype=target_dtype)
 
-            # Cargar los pesos limpios en el modelo
-            model.load_state_dict(cleaned_state_dict, strict=False)
+            # 3. Cargar los pesos limpios en el modelo y registrar diagnóstico
+            missing, unexpected = model.load_state_dict(cleaned_state_dict, strict=False)
+
+            print(f"🔥 LoRA inyectado. Total de capas LoRA cargadas: {len(cleaned_state_dict)}")
+            if len(unexpected) > 0:
+                print(f"⚠️ Aviso: {len(unexpected)} llaves del LoRA no encontraron destino.")
+
             model.to(device)
-
             print("LoRA aplicado correctamente.")
             return (llama_model,)
         except (RuntimeError, FileNotFoundError, Exception) as e:
