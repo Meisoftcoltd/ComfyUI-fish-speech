@@ -44,7 +44,7 @@ class FishSpeechWhisperTranscriber:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("prompt_text",)
     FUNCTION = "transcribe"
-    CATEGORY = "FishSpeech/Audio"
+    CATEGORY = "🐟 FishSpeech/Audio"
 
     def transcribe(self, audio, model_size, language, device):
         print(f"Cargando modelo Whisper ({model_size}) en {device}...")
@@ -115,7 +115,7 @@ class FishSpeechModelDownloader:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("checkpoint_path",)
     FUNCTION = "download_model"
-    CATEGORY = "FishSpeech/Utils"
+    CATEGORY = "🐟 FishSpeech/Utils"
 
     def download_model(self, model_repo):
         # Descarga el modelo a models/fish_speech
@@ -146,7 +146,7 @@ class FishSpeechModelLoader:
     RETURN_TYPES = ("FS_LLAMA_MODEL", "FS_DECODER_MODEL")
     RETURN_NAMES = ("llama_model", "decoder_model")
     FUNCTION = "load_models"
-    CATEGORY = "FishSpeech/Loaders"
+    CATEGORY = "🐟 FishSpeech/Loaders"
 
     def load_models(self, checkpoint_path, decoder_config, llama_device, decoder_device, precision):
         print("Cargando LLaMA y Codec de Fish Speech...")
@@ -200,7 +200,7 @@ class FishSpeechReferenceEncoder:
     RETURN_TYPES = ("FS_PROMPT_TOKENS",)
     RETURN_NAMES = ("prompt_tokens",)
     FUNCTION = "encode_reference"
-    CATEGORY = "FishSpeech/Audio"
+    CATEGORY = "🐟 FishSpeech/Audio"
 
     def encode_reference(self, decoder_model, audio):
         print("Extrayendo tokens del audio de referencia...")
@@ -261,7 +261,7 @@ class FishSpeechTextToSemantic:
     RETURN_TYPES = ("FS_SEMANTIC_TOKENS",)
     RETURN_NAMES = ("semantic_tokens",)
     FUNCTION = "generate_semantic"
-    CATEGORY = "FishSpeech/Generation"
+    CATEGORY = "🐟 FishSpeech/Generation"
 
     def generate_semantic(self, llama_model, text, max_seq_len, max_new_tokens, chunk_length, temperature, top_p, repetition_penalty, prompt_tokens=None, prompt_text=""):
         print("Generando tokens semánticos a partir del texto...")
@@ -313,7 +313,7 @@ class FishSpeechTextToSemantic:
         return (semantic_tokens,)
 
 class FishSpeechDecoder:
-    """Decodifica los tokens semánticos a una forma de onda acústica usando el DAC."""
+    """Decodifica los tokens semánticos a una forma de onda acústica usando el DAC y normaliza el volumen."""
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -321,15 +321,17 @@ class FishSpeechDecoder:
             "required": {
                 "decoder_model": ("FS_DECODER_MODEL",),
                 "semantic_tokens": ("FS_SEMANTIC_TOKENS",),
+                "normalize_audio": ("BOOLEAN", {"default": True}),
+                "target_peak_db": ("FLOAT", {"default": -1.0, "min": -10.0, "max": 0.0, "step": 0.1}),
             }
         }
 
     RETURN_TYPES = ("AUDIO",)
     RETURN_NAMES = ("audio",)
     FUNCTION = "decode_audio"
-    CATEGORY = "FishSpeech/Generation"
+    CATEGORY = "🐟 FishSpeech/Generation"
 
-    def decode_audio(self, decoder_model, semantic_tokens):
+    def decode_audio(self, decoder_model, semantic_tokens, normalize_audio, target_peak_db):
         print("Decodificando tokens a forma de onda de audio...")
 
         device = next(decoder_model.parameters()).device
@@ -343,6 +345,18 @@ class FishSpeechDecoder:
 
         # Structure for ComfyUI audio node: {"waveform": tensor(B, C, T), "sample_rate": int}
         waveform = fake_audios.cpu()
+
+        # Motor de Normalización de Volumen
+        if normalize_audio:
+            print(f"🔊 Normalizando volumen al pico de {target_peak_db} dB...")
+            # Encontrar el pico más alto absoluto en el tensor actual
+            max_val = torch.max(torch.abs(waveform))
+
+            if max_val > 0:
+                # Convertir los decibelios deseados a escala lineal multiplicadora
+                target_linear = 10 ** (target_peak_db / 20)
+                # Aplicar la ganancia al tensor
+                waveform = waveform * (target_linear / max_val)
 
         audio_output = {"waveform": waveform, "sample_rate": decoder_model.sample_rate}
         return (audio_output,)
@@ -364,7 +378,7 @@ class FishSpeechLoraLoader:
     RETURN_TYPES = ("FS_LLAMA_MODEL",)
     RETURN_NAMES = ("llama_model",)
     FUNCTION = "apply_lora"
-    CATEGORY = "FishSpeech/Loaders"
+    CATEGORY = "🐟 FishSpeech/Loaders"
 
     def apply_lora(self, llama_model, lora_name, r, alpha):
         print(f"Configurando arquitectura LoRA (r={r}, alpha={alpha})...")
