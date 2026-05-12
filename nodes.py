@@ -247,14 +247,18 @@ class FishSpeechTextToSemantic:
                     "display": "number"
                 }),
                 "max_new_tokens": ("INT", {"default": 4096, "min": 128, "max": 8192}),
-                "chunk_length": ("INT", {"default": 512, "min": 128, "max": 4096, "step": 64}),
-                "temperature": ("FLOAT", {"default": 0.7, "min": 0.1, "max": 2.0}),
-                "top_p": ("FLOAT", {"default": 0.9, "min": 0.1, "max": 1.0}),
-                "repetition_penalty": ("FLOAT", {"default": 1.1, "min": 0.5, "max": 2.0}),
+
+                # Ajustado a 200 para mitigar el Speaker Drift según el manual
+                "chunk_length": ("INT", {"default": 200, "min": 50, "max": 4096, "step": 10}),
+
+                # Desbloqueamos 2 decimales y fijamos los defaults óptimos
+                "temperature": ("FLOAT", {"default": 0.75, "min": 0.10, "max": 2.00, "step": 0.01}),
+                "top_p": ("FLOAT", {"default": 0.80, "min": 0.10, "max": 1.00, "step": 0.01}),
+                "repetition_penalty": ("FLOAT", {"default": 1.10, "min": 0.50, "max": 2.00, "step": 0.01}),
             },
             "optional": {
                 "prompt_tokens": ("FS_PROMPT_TOKENS",),
-                "prompt_text": ("STRING", {"multiline": True, "default": ""}), # Texto transcrito del audio de referencia
+                "prompt_text": ("STRING", {"multiline": True, "default": ""}),
             }
         }
 
