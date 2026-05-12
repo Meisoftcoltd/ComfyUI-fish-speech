@@ -270,14 +270,21 @@ class FishSpeechTextToSemantic:
     def generate_semantic(self, llama_model, text, max_seq_len, max_new_tokens, chunk_length, temperature, top_p, repetition_penalty, prompt_tokens=None, prompt_text=""):
         print("Generando tokens semánticos a partir del texto...")
 
+        # --- MEJORA: Inyección automática de Anclaje de Identidad ---
+        # Si el texto no empieza con el token de speaker, lo inyectamos automáticamente
+        # para forzar la alineación con el tensor de estilo del LoRA.
+        clean_text = text.strip()
+        if not clean_text.startswith("<|speaker:0|>"):
+            text = f"<|speaker:0|> {clean_text}"
+            print("⚓ Anclaje de identidad <|speaker:0|> inyectado automáticamente.")
+        # ------------------------------------------------------------
+
         model = llama_model["model"]
         decode_one_token = llama_model["decode_one_token"]
         device = llama_model["device"]
 
-        # Actualizamos dinámicamente max_seq_len para evitar excesivo consumo de VRAM o problemas de máscaras con frases cortas.
         model.config.max_seq_len = max_seq_len
 
-        # Configure caches for generation
         with torch.device(device):
             model.setup_caches(
                 max_batch_size=1,
@@ -285,7 +292,6 @@ class FishSpeechTextToSemantic:
                 dtype=next(model.parameters()).dtype,
             )
 
-        # Call generate_long which takes care of splitting text, applying prompts, and iterating chunks
         generator = generate_long(
             model=model,
             device=device,
@@ -308,7 +314,6 @@ class FishSpeechTextToSemantic:
             if response.action == "sample":
                 codes.append(response.codes)
 
-        # Concatenate generated codes
         if not codes:
             semantic_tokens = torch.empty((0,), device=device)
         else:
