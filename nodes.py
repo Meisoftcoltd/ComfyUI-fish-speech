@@ -343,8 +343,9 @@ class FishSpeechDecoder:
             }
         }
 
-    RETURN_TYPES = ("AUDIO",)
-    RETURN_NAMES = ("audio",)
+    # 🔹 AÑADIDO: Nueva salida FLOAT para la duración
+    RETURN_TYPES = ("AUDIO", "FLOAT")
+    RETURN_NAMES = ("audio", "duration_sec")
     FUNCTION = "decode_audio"
     CATEGORY = "🐟 FishSpeech/Generation"
 
@@ -366,6 +367,11 @@ class FishSpeechDecoder:
 
         waveform = fake_audios.cpu()
 
+        # ⏱️ CÁLCULO DE DURACIÓN: samples / sample_rate
+        # waveform.shape[-1] nos da el número total de muestras temporales
+        duration_sec = float(waveform.shape[-1] / decoder_model.sample_rate)
+        print(f"⏱️ Duración del audio generado: {duration_sec:.2f} segundos")
+
         # Motor de Normalización de Volumen
         if normalize_audio:
             print(f"🔊 Normalizando volumen al pico de {target_peak_db} dB...")
@@ -383,7 +389,8 @@ class FishSpeechDecoder:
         gc.collect()
         torch.cuda.empty_cache()
 
-        return (audio_output,)
+        # 🔹 AÑADIDO: Devolver la duración junto con el audio
+        return (audio_output, duration_sec)
 
 class FishSpeechLoraLoader:
     """Carga y aplica un LoRA al modelo LLaMA de Fish Speech."""
