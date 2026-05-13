@@ -268,20 +268,21 @@ class FishSpeechTextToSemantic:
     CATEGORY = "🐟 FishSpeech/Generation"
 
     def generate_semantic(self, llama_model, text, max_seq_len, max_new_tokens, chunk_length, temperature, top_p, repetition_penalty, prompt_tokens=None, prompt_text=""):
+        import gc
         print("Generando tokens semánticos a partir del texto...")
 
-        # --- MEJORA: Inyección automática de Anclaje de Identidad ---
-        # Si el texto no empieza con el token de speaker, lo inyectamos automáticamente
-        # para forzar la alineación con el tensor de estilo del LoRA.
+        # Inyección automática de Anclaje de Identidad
         clean_text = text.strip()
         if not clean_text.startswith("<|speaker:0|>"):
             text = f"<|speaker:0|> {clean_text}"
             print("⚓ Anclaje de identidad <|speaker:0|> inyectado automáticamente.")
-        # ------------------------------------------------------------
 
         model = llama_model["model"]
         decode_one_token = llama_model["decode_one_token"]
         device = llama_model["device"]
+
+        # 🚀 VRAM JUGGLING INICIO: Forzar modelo a GPU antes de trabajar
+        model.to(device)
 
         model.config.max_seq_len = max_seq_len
 
@@ -315,9 +316,16 @@ class FishSpeechTextToSemantic:
                 codes.append(response.codes)
 
         if not codes:
-            semantic_tokens = torch.empty((0,), device=device)
+            semantic_tokens = torch.empty((0,), device="cpu")
         else:
-            semantic_tokens = torch.cat(codes, dim=1)
+            # Mandamos los tokens directamente a CPU para no ocupar VRAM
+            semantic_tokens = torch.cat(codes, dim=1).cpu()
+
+        # 🧹 VRAM JUGGLING FIN: Expulsar modelo a RAM (CPU) y vaciar caché de la gráfica
+        print("🧹 Liberando 15GB de VRAM del modelo LLaMA...")
+        model.to("cpu")
+        gc.collect()
+        torch.cuda.empty_cache()
 
         return (semantic_tokens,)
 
@@ -341,9 +349,13 @@ class FishSpeechDecoder:
     CATEGORY = "🐟 FishSpeech/Generation"
 
     def decode_audio(self, decoder_model, semantic_tokens, normalize_audio, target_peak_db):
+        import gc
         print("Decodificando tokens a forma de onda de audio...")
 
-        device = next(decoder_model.parameters()).device
+        # 🚀 VRAM JUGGLING INICIO: Subir decoder a GPU
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        decoder_model.to(device)
+
         indices = semantic_tokens.to(device)
 
         if indices.ndim == 2:
@@ -352,22 +364,25 @@ class FishSpeechDecoder:
         with torch.no_grad():
             fake_audios = decoder_model.from_indices(indices)
 
-        # Structure for ComfyUI audio node: {"waveform": tensor(B, C, T), "sample_rate": int}
         waveform = fake_audios.cpu()
 
         # Motor de Normalización de Volumen
         if normalize_audio:
             print(f"🔊 Normalizando volumen al pico de {target_peak_db} dB...")
-            # Encontrar el pico más alto absoluto en el tensor actual
             max_val = torch.max(torch.abs(waveform))
-
             if max_val > 0:
-                # Convertir los decibelios deseados a escala lineal multiplicadora
                 target_linear = 10 ** (target_peak_db / 20)
-                # Aplicar la ganancia al tensor
                 waveform = waveform * (target_linear / max_val)
 
         audio_output = {"waveform": waveform, "sample_rate": decoder_model.sample_rate}
+
+        # 🧹 VRAM JUGGLING FIN: Expulsar decoder a RAM y limpiar
+        print("🧹 Liberando VRAM del decodificador DAC...")
+        decoder_model.to("cpu")
+        del indices
+        gc.collect()
+        torch.cuda.empty_cache()
+
         return (audio_output,)
 
 class FishSpeechLoraLoader:
