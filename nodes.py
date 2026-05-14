@@ -28,7 +28,7 @@ from fish_speech.models.text2semantic.lora import LoraConfig, setup_lora
 
 
 class FishSpeechWhisperTranscriber:
-    """Transcribe el audio de referencia a texto usando faster-whisper, optimizado contra alucinaciones."""
+    """Transcribe el audio de referencia a texto usando faster-whisper, optimizado contra alucinaciones y con soporte SRT."""
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -38,6 +38,8 @@ class FishSpeechWhisperTranscriber:
                 "model_size": (["tiny", "base", "small", "medium", "large-v3"], {"default": "base"}),
                 "language": (["auto", "es", "en", "fr", "de", "it", "pt", "ja", "zh"], {"default": "auto"}),
                 "device": (["cuda", "cpu"], {"default": "cuda"}),
+                # 🔹 AÑADIDO: Combo para formato de salida
+                "output_format": (["normal", "srt"], {"default": "normal"}),
             }
         }
 
@@ -46,7 +48,7 @@ class FishSpeechWhisperTranscriber:
     FUNCTION = "transcribe"
     CATEGORY = "🐟 FishSpeech/Audio"
 
-    def transcribe(self, audio, model_size, language, device):
+    def transcribe(self, audio, model_size, language, device, output_format):
         print(f"Cargando modelo Whisper ({model_size}) en {device}...")
         compute_type = "float16" if device == "cuda" else "int8"
 
@@ -59,12 +61,11 @@ class FishSpeechWhisperTranscriber:
             else:
                 raise e
 
-        # Extraer tensor y sample rate del formato estándar de ComfyUI [batch, channels, samples]
+        # Extraer tensor y sample rate del formato estándar de ComfyUI
         waveform = audio["waveform"]
         sample_rate = audio["sample_rate"]
 
-        # Convertir a mono si es estéreo (promedio de canales)
-        # Evaluamos explicitamente si hay mas de 1 canal en la dimension correcta (1 usualmente para batch, channels, samples)
+        # Convertir a mono si es estéreo
         if waveform.shape[1] > 1:
             waveform = waveform.mean(dim=1, keepdim=True)
 
@@ -73,10 +74,10 @@ class FishSpeechWhisperTranscriber:
             resampler = T.Resample(orig_freq=sample_rate, new_freq=16000)
             waveform = resampler(waveform)
 
-        # Convertir a numpy array 1D (colapsando cualquier otra dimension de batch/channels a 1D plano)
+        # Convertir a numpy array 1D
         audio_np = waveform.flatten().numpy()
 
-        print("Transcribiendo audio (con VAD anti-alucinaciones)...")
+        print(f"Transcribiendo audio (Formato: {output_format.upper()})...")
         lang_param = None if language == "auto" else language
 
         try:
@@ -84,13 +85,34 @@ class FishSpeechWhisperTranscriber:
                 audio_np,
                 language=lang_param,
                 beam_size=5,
-                vad_filter=True, # CRÍTICO: Elimina silencios para evitar alucinaciones
-                condition_on_previous_text=False # CRÍTICO: Evita bucles de repetición
+                vad_filter=True, # Anti-alucinaciones
+                condition_on_previous_text=False # Evita bucles de repetición
             )
 
-            # Unir todos los segmentos detectados
-            transcription = " ".join([segment.text.strip() for segment in segments])
-            print(f"Transcripción detectada ({info.language}): {transcription}")
+            # 🔹 AÑADIDO: Lógica de formateo según la selección del usuario
+            if output_format == "srt":
+                def format_timestamp(seconds):
+                    hours = int(seconds // 3600)
+                    minutes = int((seconds % 3600) // 60)
+                    secs = int(seconds % 60)
+                    millis = int((seconds - int(seconds)) * 1000)
+                    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+
+                srt_blocks = []
+                for index, segment in enumerate(segments, start=1):
+                    start_time = format_timestamp(segment.start)
+                    end_time = format_timestamp(segment.end)
+                    text = segment.text.strip()
+                    # Estructura oficial de un bloque SRT
+                    srt_blocks.append(f"{index}\n{start_time} --> {end_time}\n{text}\n")
+
+                transcription = "\n".join(srt_blocks)
+                print(f"Idioma detectado ({info.language}). Subtítulos SRT generados con éxito.")
+
+            else:
+                # Modo normal: Texto plano continuo
+                transcription = " ".join([segment.text.strip() for segment in segments])
+                print(f"Transcripción detectada ({info.language}): {transcription}")
 
             return (transcription,)
 
