@@ -28,7 +28,7 @@ from fish_speech.models.text2semantic.lora import LoraConfig, setup_lora
 
 
 class FishSpeechWhisperTranscriber:
-    """Transcribe el audio de referencia a texto usando faster-whisper, optimizado contra alucinaciones y con soporte SRT."""
+    """Transcribe el audio de referencia a texto usando faster-whisper, optimizado contra alucinaciones y con soporte SRT y Ventanas de Video."""
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -38,8 +38,10 @@ class FishSpeechWhisperTranscriber:
                 "model_size": (["tiny", "base", "small", "medium", "large-v3"], {"default": "base"}),
                 "language": (["auto", "es", "en", "fr", "de", "it", "pt", "ja", "zh"], {"default": "auto"}),
                 "device": (["cuda", "cpu"], {"default": "cuda"}),
-                # 🔹 AÑADIDO: Combo para formato de salida
-                "output_format": (["normal", "srt"], {"default": "normal"}),
+                "output_format": (["normal", "srt", "video_windows"], {"default": "video_windows"}),
+                # 🔹 CAMBIADO A FLOAT: Permite decimales y conectar nodos externos de tipo Float
+                "fps": ("FLOAT", {"default": 12.0, "min": 0.1, "max": 240.0, "step": 0.01}),
+                "frame_window": ("INT", {"default": 81, "min": 1, "max": 8192}),
             }
         }
 
@@ -48,7 +50,7 @@ class FishSpeechWhisperTranscriber:
     FUNCTION = "transcribe"
     CATEGORY = "🐟 FishSpeech/Audio"
 
-    def transcribe(self, audio, model_size, language, device, output_format):
+    def transcribe(self, audio, model_size, language, device, output_format, fps, frame_window):
         print(f"Cargando modelo Whisper ({model_size}) en {device}...")
         compute_type = "float16" if device == "cuda" else "int8"
 
@@ -61,36 +63,72 @@ class FishSpeechWhisperTranscriber:
             else:
                 raise e
 
-        # Extraer tensor y sample rate del formato estándar de ComfyUI
         waveform = audio["waveform"]
         sample_rate = audio["sample_rate"]
 
-        # Convertir a mono si es estéreo
         if waveform.shape[1] > 1:
             waveform = waveform.mean(dim=1, keepdim=True)
 
-        # Resamplear a 16000Hz (requerido por Whisper)
         if sample_rate != 16000:
             resampler = T.Resample(orig_freq=sample_rate, new_freq=16000)
             waveform = resampler(waveform)
 
-        # Convertir a numpy array 1D
         audio_np = waveform.flatten().numpy()
 
         print(f"Transcribiendo audio (Formato: {output_format.upper()})...")
         lang_param = None if language == "auto" else language
+
+        # 🔹 Activamos el mapeo de palabras (word_timestamps) SOLO si lo necesitamos
+        enable_word_timestamps = (output_format == "video_windows")
 
         try:
             segments, info = model.transcribe(
                 audio_np,
                 language=lang_param,
                 beam_size=5,
-                vad_filter=True, # Anti-alucinaciones
-                condition_on_previous_text=False # Evita bucles de repetición
+                vad_filter=True,
+                condition_on_previous_text=False,
+                word_timestamps=enable_word_timestamps # Extrae el segundo exacto de CADA palabra
             )
 
-            # 🔹 AÑADIDO: Lógica de formateo según la selección del usuario
-            if output_format == "srt":
+            # 🔹 LÓGICA DE VENTANAS PARA WANVIDEO
+            if output_format == "video_windows":
+                # Al ser fps un FLOAT, esta división matemática es exacta (ej: 81 / 12.0 = 6.75)
+                window_duration_seconds = frame_window / float(fps)
+                print(f"Calculando ventanas de video: {window_duration_seconds:.4f} segundos por ventana (a {fps} FPS).")
+
+                windows_dict = {}
+
+                # Iterar sobre las palabras y meterlas en la "caja" de tiempo correspondiente
+                for segment in segments:
+                    for word in segment.words:
+                        # Averiguamos a qué número de ventana pertenece el inicio de esta palabra
+                        window_idx = int(word.start // window_duration_seconds) + 1
+
+                        if window_idx not in windows_dict:
+                            windows_dict[window_idx] = []
+                        windows_dict[window_idx].append(word.word.strip())
+
+                if not windows_dict:
+                    return ("No se detectó voz.",)
+
+                # Rellenar ventanas vacías (silencios) y armar el string final
+                max_window = max(windows_dict.keys())
+                output_blocks = []
+
+                for i in range(1, max_window + 1):
+                    # Si hubo un silencio absoluto en esa ventana, le pasamos la etiqueta [silence]
+                    text_in_window = " ".join(windows_dict.get(i, ["[silencio]"]))
+                    start_sec = (i - 1) * window_duration_seconds
+                    end_sec = i * window_duration_seconds
+
+                    output_blocks.append(f"Ventana {i} [{start_sec:.2f}s - {end_sec:.2f}s]: {text_in_window}")
+
+                transcription = "\n".join(output_blocks)
+                print(f"Idioma detectado ({info.language}). {max_window} ventanas generadas con éxito.")
+
+            # 🔹 LÓGICA SRT ORIGINAL
+            elif output_format == "srt":
                 def format_timestamp(seconds):
                     hours = int(seconds // 3600)
                     minutes = int((seconds % 3600) // 60)
@@ -103,14 +141,13 @@ class FishSpeechWhisperTranscriber:
                     start_time = format_timestamp(segment.start)
                     end_time = format_timestamp(segment.end)
                     text = segment.text.strip()
-                    # Estructura oficial de un bloque SRT
                     srt_blocks.append(f"{index}\n{start_time} --> {end_time}\n{text}\n")
 
                 transcription = "\n".join(srt_blocks)
                 print(f"Idioma detectado ({info.language}). Subtítulos SRT generados con éxito.")
 
+            # 🔹 LÓGICA NORMAL ORIGINAL
             else:
-                # Modo normal: Texto plano continuo
                 transcription = " ".join([segment.text.strip() for segment in segments])
                 print(f"Transcripción detectada ({info.language}): {transcription}")
 
