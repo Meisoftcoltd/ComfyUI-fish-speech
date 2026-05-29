@@ -39,9 +39,10 @@ class FishSpeechWhisperTranscriber:
                 "language": (["auto", "es", "en", "fr", "de", "it", "pt", "ja", "zh"], {"default": "auto"}),
                 "device": (["cuda", "cpu"], {"default": "cuda"}),
                 "output_format": (["normal", "srt", "video_windows"], {"default": "video_windows"}),
-                # 🔹 CAMBIADO A FLOAT: Permite decimales y conectar nodos externos de tipo Float
                 "fps": ("FLOAT", {"default": 12.0, "min": 0.1, "max": 240.0, "step": 0.01}),
                 "frame_window": ("INT", {"default": 81, "min": 1, "max": 8192}),
+                # 🔹 AÑADIDO: motion_frame para calcular el solapamiento real
+                "motion_frame": ("INT", {"default": 13, "min": 0, "max": 1024}),
             }
         }
 
@@ -50,7 +51,7 @@ class FishSpeechWhisperTranscriber:
     FUNCTION = "transcribe"
     CATEGORY = "🐟 FishSpeech/Audio"
 
-    def transcribe(self, audio, model_size, language, device, output_format, fps, frame_window):
+    def transcribe(self, audio, model_size, language, device, output_format, fps, frame_window, motion_frame):
         print(f"Cargando modelo Whisper ({model_size}) en {device}...")
         compute_type = "float16" if device == "cuda" else "int8"
 
@@ -78,7 +79,6 @@ class FishSpeechWhisperTranscriber:
         print(f"Transcribiendo audio (Formato: {output_format.upper()})...")
         lang_param = None if language == "auto" else language
 
-        # 🔹 Activamos el mapeo de palabras (word_timestamps) SOLO si lo necesitamos
         enable_word_timestamps = (output_format == "video_windows")
 
         try:
@@ -88,22 +88,25 @@ class FishSpeechWhisperTranscriber:
                 beam_size=5,
                 vad_filter=True,
                 condition_on_previous_text=False,
-                word_timestamps=enable_word_timestamps # Extrae el segundo exacto de CADA palabra
+                word_timestamps=enable_word_timestamps
             )
 
-            # 🔹 LÓGICA DE VENTANAS PARA WANVIDEO
             if output_format == "video_windows":
-                # Al ser fps un FLOAT, esta división matemática es exacta (ej: 81 / 12.0 = 6.75)
-                window_duration_seconds = frame_window / float(fps)
-                print(f"Calculando ventanas de video: {window_duration_seconds:.4f} segundos por ventana (a {fps} FPS).")
+                # 🔹 CÁLCULO CON SOLAPAMIENTO (SLIDING WINDOW)
+                # El avance real (stride) de cada ventana es el tamaño de la ventana menos el solapamiento.
+                stride_frames = frame_window - motion_frame
+                if stride_frames <= 0:
+                    stride_frames = frame_window # Seguridad por si motion_frame está mal configurado
+
+                stride_seconds = stride_frames / float(fps)
+                print(f"Calculando ventanas con solapamiento: Avance real de {stride_seconds:.4f}s por ventana ({stride_frames} frames a {fps} FPS).")
 
                 windows_dict = {}
 
-                # Iterar sobre las palabras y meterlas en la "caja" de tiempo correspondiente
                 for segment in segments:
                     for word in segment.words:
-                        # Averiguamos a qué número de ventana pertenece el inicio de esta palabra
-                        window_idx = int(word.start // window_duration_seconds) + 1
+                        # Calculamos a qué ventana pertenece basándonos en el avance real (stride)
+                        window_idx = int(word.start // stride_seconds) + 1
 
                         if window_idx not in windows_dict:
                             windows_dict[window_idx] = []
@@ -112,22 +115,23 @@ class FishSpeechWhisperTranscriber:
                 if not windows_dict:
                     return ("No se detectó voz.",)
 
-                # Rellenar ventanas vacías (silencios) y armar el string final
                 max_window = max(windows_dict.keys())
                 output_blocks = []
 
                 for i in range(1, max_window + 1):
-                    # Si hubo un silencio absoluto en esa ventana, le pasamos la etiqueta [silence]
                     text_in_window = " ".join(windows_dict.get(i, ["[silencio]"]))
-                    start_sec = (i - 1) * window_duration_seconds
-                    end_sec = i * window_duration_seconds
+
+                    # Tiempos visuales de la ventana para el prompt (para darle contexto exacto a Ollama)
+                    start_frame = (i - 1) * stride_frames
+                    end_frame = start_frame + frame_window
+                    start_sec = start_frame / float(fps)
+                    end_sec = end_frame / float(fps)
 
                     output_blocks.append(f"Ventana {i} [{start_sec:.2f}s - {end_sec:.2f}s]: {text_in_window}")
 
                 transcription = "\n".join(output_blocks)
                 print(f"Idioma detectado ({info.language}). {max_window} ventanas generadas con éxito.")
 
-            # 🔹 LÓGICA SRT ORIGINAL
             elif output_format == "srt":
                 def format_timestamp(seconds):
                     hours = int(seconds // 3600)
@@ -146,7 +150,6 @@ class FishSpeechWhisperTranscriber:
                 transcription = "\n".join(srt_blocks)
                 print(f"Idioma detectado ({info.language}). Subtítulos SRT generados con éxito.")
 
-            # 🔹 LÓGICA NORMAL ORIGINAL
             else:
                 transcription = " ".join([segment.text.strip() for segment in segments])
                 print(f"Transcripción detectada ({info.language}): {transcription}")
