@@ -523,3 +523,73 @@ class FishSpeechLoraLoader:
         except (RuntimeError, FileNotFoundError, Exception) as e:
             print(f"Error al cargar el LoRA: {str(e)}")
             raise RuntimeError(f"Error al cargar el LoRA {lora_name}: {str(e)}")
+
+class AudioTimeStretchPedalboard:
+    """Ralentiza o acelera el audio manteniendo el tono original usando Spotify Pedalboard."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "audio": ("AUDIO",),
+                "speed_factor": ("FLOAT", {"default": 0.85, "min": 0.50, "max": 1.50, "step": 0.01, "tooltip": "1.0 es velocidad normal. 0.85 ralentiza la voz un 15%."}),
+                "pitch_shift_semitones": ("FLOAT", {"default": 0.0, "min": -12.0, "max": 12.0, "step": 0.01, "tooltip": "0.0 mantiene la voz idéntica. Negativo la hace más grave."}),
+            }
+        }
+
+    RETURN_TYPES = ("AUDIO", "STRING")
+    RETURN_NAMES = ("audio", "log")
+    FUNCTION = "process"
+    CATEGORY = "🐟 FishSpeech/Audio"
+
+    def process(self, audio, speed_factor, pitch_shift_semitones):
+        log_output = []
+        def _log(msg):
+            print(msg)
+            log_output.append(str(msg))
+
+        _log(f"\n{'='*50}")
+        _log(f"🎸 [Secuencial Batcher] NODO: Pedalboard Time Stretch")
+
+        try:
+            from pedalboard import Pedalboard, TimeStretch
+        except ImportError:
+            _log("   -> ❌ ERROR: Pedalboard no está instalado.")
+            raise ImportError("Falta la dependencia. Ejecuta en tu consola: pip install pedalboard")
+
+        if not isinstance(audio, dict) or "waveform" not in audio:
+            _log("   -> ⚠️ Entrada de audio inválida. Ignorando nodo.")
+            return (audio, "\n".join(log_output))
+
+        waveform = audio["waveform"]
+        sample_rate = audio.get("sample_rate", 44100)
+
+        _log(f"   -> Velocidad solicitada: {speed_factor}x | Ajuste de tono: {pitch_shift_semitones} semitonos")
+
+        # Bypass automático si no hay cambios requeridos
+        if speed_factor == 1.0 and pitch_shift_semitones == 0.0:
+            _log("   -> ⏩ Sin cambios solicitados. Bypasseando...")
+            _log(f"{'='*50}\n")
+            return (audio, "\n".join(log_output))
+
+        # Pedalboard espera arrays de NumPy en formato (canales, samples)
+        # El tensor de ComfyUI viene en (batch, canales, samples), sacamos el batch dimension:
+        audio_np = waveform.squeeze(0).numpy()
+
+        # Motor de procesamiento de alta fidelidad
+        board = Pedalboard([
+            TimeStretch(playback_rate=speed_factor, pitch_shift_in_semitones=pitch_shift_semitones)
+        ])
+
+        _log("   -> ⚙️ Aplicando algoritmos de estiramiento temporal de Spotify...")
+        processed_np = board(audio_np, sample_rate)
+
+        # Reconvertir el resultado a tensor de PyTorch para el ecosistema ComfyUI
+        processed_tensor = torch.from_numpy(processed_np).unsqueeze(0)
+
+        new_audio = {"waveform": processed_tensor, "sample_rate": sample_rate}
+
+        _log("   -> ✅ Audio procesado con éxito. Transitorios preservados.")
+        _log(f"{'='*50}\n")
+
+        return (new_audio, "\n".join(log_output))
