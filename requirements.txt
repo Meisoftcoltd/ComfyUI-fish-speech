@@ -12,3 +12,4 @@ pytorch-lightning
 lightning
 pyrootutils
 faster-whisper>=1.0.0
+pedalboard>=0.3.0
