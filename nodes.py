@@ -552,10 +552,11 @@ class AudioTimeStretchPedalboard:
         _log(f"🎸 [Secuencial Batcher] NODO: Pedalboard Time Stretch")
 
         try:
-            from pedalboard import Pedalboard, TimeStretch
+            # 🛠️ CORRECCIÓN: Importamos la función 'time_stretch' directamente
+            from pedalboard import time_stretch
         except ImportError:
-            _log("   -> ❌ ERROR: Pedalboard no está instalado.")
-            raise ImportError("Falta la dependencia. Ejecuta en tu consola: pip install pedalboard")
+            _log("   -> ❌ ERROR: Pedalboard no está instalado o la versión es incorrecta.")
+            raise ImportError("Falta la dependencia. Ejecuta en tu consola: pip install pedalboard>=0.3.0")
 
         if not isinstance(audio, dict) or "waveform" not in audio:
             _log("   -> ⚠️ Entrada de audio inválida. Ignorando nodo.")
@@ -572,17 +573,18 @@ class AudioTimeStretchPedalboard:
             _log(f"{'='*50}\n")
             return (audio, "\n".join(log_output))
 
-        # Pedalboard espera arrays de NumPy en formato (canales, samples)
         # El tensor de ComfyUI viene en (batch, canales, samples), sacamos el batch dimension:
         audio_np = waveform.squeeze(0).numpy()
 
-        # Motor de procesamiento de alta fidelidad
-        board = Pedalboard([
-            TimeStretch(playback_rate=speed_factor, pitch_shift_in_semitones=pitch_shift_semitones)
-        ])
-
         _log("   -> ⚙️ Aplicando algoritmos de estiramiento temporal de Spotify...")
-        processed_np = board(audio_np, sample_rate)
+
+        # 🛠️ CORRECCIÓN: Ejecutamos el estiramiento mediante la función directa
+        processed_np = time_stretch(
+            audio_np,
+            sample_rate,
+            playback_rate=speed_factor,
+            pitch_shift_in_semitones=pitch_shift_semitones
+        )
 
         # Reconvertir el resultado a tensor de PyTorch para el ecosistema ComfyUI
         processed_tensor = torch.from_numpy(processed_np).unsqueeze(0)
