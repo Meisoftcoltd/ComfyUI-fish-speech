@@ -532,7 +532,7 @@ class AudioTimeStretchPedalboard:
         return {
             "required": {
                 "audio": ("AUDIO",),
-                "speed_factor": ("FLOAT", {"default": 0.85, "min": 0.50, "max": 1.50, "step": 0.01, "tooltip": "1.0 es velocidad normal. 0.85 ralentiza la voz un 15%."}),
+                "speed_factor": ("FLOAT", {"default": 0.85, "min": 0.50, "max": 1.50, "step": 0.01, "tooltip": "1.0 es velocidad normal. Menor a 1.0 ralentiza, mayor a 1.0 acelera."}),
                 "pitch_shift_semitones": ("FLOAT", {"default": 0.0, "min": -12.0, "max": 12.0, "step": 0.01, "tooltip": "0.0 mantiene la voz idéntica. Negativo la hace más grave."}),
             }
         }
@@ -552,7 +552,6 @@ class AudioTimeStretchPedalboard:
         _log(f"🎸 [Secuencial Batcher] NODO: Pedalboard Time Stretch")
 
         try:
-            # 🛠️ CORRECCIÓN: Importamos la función 'time_stretch' directamente
             from pedalboard import time_stretch
         except ImportError:
             _log("   -> ❌ ERROR: Pedalboard no está instalado o la versión es incorrecta.")
@@ -578,11 +577,11 @@ class AudioTimeStretchPedalboard:
 
         _log("   -> ⚙️ Aplicando algoritmos de estiramiento temporal de Spotify...")
 
-        # 🛠️ CORRECCIÓN: Ejecutamos el estiramiento mediante la función directa
+        # 🛠️ CORRECCIÓN DEFINITIVA: Cambiamos 'playback_rate' por 'stretch_factor'
         processed_np = time_stretch(
             audio_np,
-            sample_rate,
-            playback_rate=speed_factor,
+            float(sample_rate),
+            stretch_factor=speed_factor,
             pitch_shift_in_semitones=pitch_shift_semitones
         )
 
