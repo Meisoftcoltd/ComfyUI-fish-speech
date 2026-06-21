@@ -344,6 +344,7 @@ class FishSpeechTextToSemantic:
         device = llama_model["device"]
 
         # 🚀 VRAM JUGGLING INICIO: Forzar modelo a GPU antes de trabajar
+        torch.cuda.synchronize()
         model.to(device)
 
         model.config.max_seq_len = max_seq_len
@@ -385,6 +386,7 @@ class FishSpeechTextToSemantic:
 
         # 🧹 VRAM JUGGLING FIN: Expulsar modelo a RAM (CPU) y vaciar caché de la gráfica
         print("🧹 Liberando 15GB de VRAM del modelo LLaMA...")
+        torch.cuda.synchronize()
         model.to("cpu")
         gc.collect()
         torch.cuda.empty_cache()
@@ -417,6 +419,7 @@ class FishSpeechDecoder:
 
         # 🚀 VRAM JUGGLING INICIO: Subir decoder a GPU
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        torch.cuda.synchronize()
         decoder_model.to(device)
 
         indices = semantic_tokens.to(device)
@@ -446,6 +449,7 @@ class FishSpeechDecoder:
 
         # 🧹 VRAM JUGGLING FIN: Expulsar decoder a RAM y limpiar
         print("🧹 Liberando VRAM del decodificador DAC...")
+        torch.cuda.synchronize()
         decoder_model.to("cpu")
         del indices
         gc.collect()
