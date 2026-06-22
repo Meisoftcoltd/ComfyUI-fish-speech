@@ -206,7 +206,15 @@ def decode_n_tokens(
     # [MODIFIED] Pre-fetch ID for efficiency loop
     im_end_id = model.tokenizer.get_token_id(IM_END_TOKEN)
 
-    for i in tqdm(range(num_new_tokens)):
+    # --- COMFYUI PROGRESS BAR ---
+    try:
+        import comfy.utils
+        pbar = comfy.utils.ProgressBar(num_new_tokens)
+    except ImportError:
+        pbar = None
+    # ----------------------------
+
+    for i in tqdm(range(num_new_tokens), desc="Generando Audio (LLaMA)"):
         with sdpa_kernel(SDPBackend.MATH):
             next_token = decode_one_token(
                 model=model,
@@ -229,6 +237,9 @@ def decode_n_tokens(
             :, 0
         ]
         new_tokens.append(next_token)
+
+        if pbar is not None:
+            pbar.update(1)
 
         if cur_token[0, 0, -1] == im_end_id:
             break
